@@ -47,7 +47,7 @@ class Training:
         self.criterion = nn.CrossEntropyLoss(reduction='mean') # combines LogSoftmax layer and NLLLoss
         self.param_recorder = ParamRecorder(200)
 
-    def start(self, thinning: int=20, epochs: int=5):
+    def start(self, epochs: int=5, thinning: int=20):
         losses, test_err = [], []
         k = 0
         agg_lr = 0
@@ -69,7 +69,7 @@ class Training:
             losses.append(loss)
             # Get test accuracy
             err = self.__test_error()
-            print(f'Iteration {k}: Test error {err:0.4f}')
+            print(f'Iteration {k}: Test error {err:0.4f}, Step size {self.optim.lr()}')
             test_err.append(err)
         return self.param_recorder.records, losses, test_err
 

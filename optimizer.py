@@ -103,7 +103,7 @@ class pSGLD(SGMCMC):
         # Due to diagonal form (originally) -> elementwise products
         grad.add_(prior.dLogLike_neg(param))
         param.addcdiv_(grad, D, value=-lr/2)\
-            .addcmul_(D.sqrt(), Z, value=math.sqrt(lr * tau))
+            .addcdiv_(Z, D.sqrt(), value=math.sqrt(lr * tau))
 
 
 class MSGLD(SGMCMC):
