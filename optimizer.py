@@ -1,3 +1,4 @@
+from cmath import sqrt
 import math
 import torch
 from torch.optim.optimizer import Optimizer
@@ -8,46 +9,64 @@ from abc import ABC, abstractmethod
 class SGMCMC(Optimizer, ABC):
     """opt_params = dict(name, lr0, min_lr, gamma, ...)
     """
-    def __init__(self, params: Iterable, priors: Iterable, opt_params: dict):
-        defaults = dict(priors=priors, **opt_params)
-        super(SGMCMC, self).__init__(params, defaults)
+    def __init__(self, params: Iterable, opt_params: dict):
+        self.opt_params = opt_params
+        super(SGMCMC, self).__init__(params, opt_params)
+
+    def save_gradlikelihood(self):
+        """Save only the likelihood part of the gradient but also some
+        of the required information for the step to complete.
+        """
+        # Gather all required information for one step
+        self.current_step = {
+            'params': [], # params with grad
+            'gradlikelihoods': [], # gradient without prior
+            'gradUs': [] } # gradient with prior
+        for group in self.param_groups:
+            for param in group['params']:
+                if param.grad is not None:
+                    grad = param.grad.detach().clone() # make deep copy
+                    x = grad.norm()
+                    self.current_step['params'].append(param)
+                    self.current_step['gradlikelihoods'].append(grad)
+
+    @torch.no_grad()
+    def step(self):
+        lr0 = self.opt_params['lr0']
+        min_lr = self.opt_params['min_lr']
+        gamma = self.opt_params['gamma']
+
+        # Now save the whole gradient (gradU, after save_gradlikelihood)
+        for param in self.current_step['params']:
+            self.current_step['gradUs'].append(param.grad)
+
+            # Dynamically adjust learning rate
+            state = self.state[param]
+            if len(state) == 0:
+                self.reset_variables(param, state)
+                state['lr'], state['step'] = lr0, 1
+            if state['lr'] > min_lr:
+                # polynomial decay
+                state['lr'] = max(lr0 * state['step']**(-gamma), min_lr)
+
+        # Apply SGMCMC algorithm
+        for i, param in enumerate(self.current_step['params']):
+            grad = self.current_step['gradlikelihoods'][i]
+            gradU = self.current_step['gradUs'][i]
+            state = self.state[param]
+            self.apply_alg(param, grad, gradU, state)
+            state['step'] += 1
 
     @abstractmethod
     def reset_variables(self, param, state):
         pass
     
     @abstractmethod
-    def apply_alg(self, param, grad, prior, group, state):
+    def apply_alg(self, param, grad, gradU, state):
         pass
 
     def lr(self):
         return next(iter(self.state.values()))['lr']
-
-    @torch.no_grad()
-    def step(self):
-        params_with_grad, priors, grads = [], [], []
-        
-        for group in self.param_groups:
-            lr0, gamma, min_lr = group['lr0'], group['gamma'], group['min_lr']
-            
-            for param, prior in zip(group['params'], group['priors']):
-                if param.grad is not None:
-                    params_with_grad.append(param)
-                    grads.append(param.grad)
-                    priors.append(prior)
-
-                    # Dynamically adjust learning rate
-                    state = self.state[param]
-                    if len(state) == 0:
-                        self.reset_variables(param, state)
-                        state['lr'], state['step'] = lr0, 1
-                    if state['lr'] > min_lr:
-                        # polynomial decay
-                        state['lr'] = max(lr0 * state['step']**(-gamma), min_lr)
-                    state['step'] += 1
-
-            for param, grad, prior in zip(params_with_grad, grads, priors):
-                self.apply_alg(param, grad, prior, group, self.state[param])
 
 
 class SGLD(SGMCMC):
@@ -59,21 +78,20 @@ class SGLD(SGMCMC):
     opt_params: lr0, gamma, min_lr, tau
     """
 
-    def __init__(self, params: Iterable, priors: Iterable, opt_params: dict):
-        super(SGLD, self).__init__(params, priors, opt_params)
+    def __init__(self, params: Iterable, opt_params: dict):
+        super(SGLD, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
         pass
 
-    def apply_alg(self, param, grad, prior, group, state):
+    def apply_alg(self, param, grad, gradU, state):
         # Get variables
-        tau = group['tau']
+        tau = self.opt_params['tau']
         lr = state['lr']
 
         # SGLD-Algorithm
         Z = torch.randn_like(grad).cuda()
-        grad.add_(prior.dLogLike_neg(param)) # grad log likelihood + grad log prior
-        param.add_(grad, alpha=-lr/2)\
+        param.add_(gradU, alpha=-lr/2)\
             .add_(Z, alpha=math.sqrt(lr * tau)) # noise
 
 
@@ -81,80 +99,107 @@ class pSGLD(SGMCMC):
     """See above
     Default parameters see Lietal16 and Chen15
 
-    opt_params: lr0, min_lr, gamma, alpha, eps, tau
+    opt_params: lr0, min_lr, gamma, alpha, eps, tau, N(_train)
     """
 
-    def __init__(self, params: Iterable, priors: Iterable, opt_params: dict):
-        super(pSGLD, self).__init__(params, priors, opt_params)
+    def __init__(self, params: Iterable, opt_params: dict):
+        super(pSGLD, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
         state['V'] = torch.zeros_like(param).cuda()
 
-    def apply_alg(self, param, grad, prior, group, state):
+    def apply_alg(self, param, grad, gradU, state):
         # Get variables
-        alpha, eps, tau = group['alpha'], group['eps'], group['tau']
+        alpha = self.opt_params['alpha']
+        eps = self.opt_params['eps']
+        tau = self.opt_params['tau']
+        N = self.opt_params['N']
         lr, V = state['lr'], state['V']
 
         # pSGLD-Algorithm
         Z = torch.randn_like(grad).cuda()
-        V.mul_(alpha).addcmul_(grad, grad, value=1-alpha) # vector format, no diagonal matrix
-        D = V.sqrt().add_(eps)
+        mean_grad = grad/N
+        V.mul_(alpha).addcmul_(mean_grad, mean_grad, value=1-alpha) # vector format, no diagonal matrix
+        G = 1/V.sqrt().add_(eps)
 
         # Due to diagonal form (originally) -> elementwise products
-        grad.add_(prior.dLogLike_neg(param))
-        param.addcdiv_(grad, D, value=-lr/2)\
-            .addcdiv_(Z, D.sqrt(), value=math.sqrt(lr * tau))
+        param.addcmul_(gradU, G, value=-lr/2)\
+            .addcmul_(Z, G.sqrt(), value=math.sqrt(lr * tau))
 
 
 class MSGLD(SGMCMC):
     """    opt_params: lr0, min_lr, gamma, beta1, a, tau
     """
 
-    def __init__(self, params: Iterable, priors: Iterable, opt_params: dict):
-        super(MSGLD, self).__init__(params, priors, opt_params)
+    def __init__(self, params: Iterable, opt_params: dict):
+        super(MSGLD, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
         state['m'] = torch.zeros_like(param).cuda()
-        state['gradU'] = torch.zeros_like(param).cuda()
 
-    def apply_alg(self, param, grad, prior, group, state):
+    def apply_alg(self, param, grad, gradU, state):
         # Get variables
-        beta1, a, tau = group['beta1'], group['a'], group['tau']
+        beta1 = self.opt_params['beta1']
+        a = self.opt_params['a']
+        tau = self.opt_params['tau']
         lr, m = state['lr'], state['m']
-        gradU = state['gradU']
 
         # MSGLD-Algorithm
         Z = torch.randn_like(grad).cuda()
-        m.mul_(beta1).add_(gradU, alpha=1-beta1)
-        gradU = grad.add_(prior.dLogLike_neg(param))
-        param.add_(gradU + a*m, alpha=-lr/2)\
+        param.add_(gradU.add(m, alpha=a), alpha=-lr/2)\
             .add_(Z, alpha=math.sqrt(lr * tau))
+        m.mul_(beta1).add_(gradU, alpha=1-beta1)
 
 
 class ASGLD(SGMCMC):
     """    opt_params: lr0, min_lr, gamma, beta1, beta2, a, eps, tau
     """
 
-    def __init__(self, params: Iterable, priors: Iterable, opt_params: dict):
-        super(ASGLD, self).__init__(params, priors, opt_params)
+    def __init__(self, params: Iterable, opt_params: dict):
+        super(ASGLD, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
+        eps = self.opt_params['eps']
         state['m'] = torch.zeros_like(param).cuda()
         state['V'] = torch.zeros_like(param).cuda()
-        state['gradU'] = torch.zeros_like(param).cuda()
 
-    def apply_alg(self, param, grad, prior, group, state):
+    def apply_alg(self, param, grad, gradU, state):
         # Get variables
-        beta1, beta2 = group['beta1'], group['beta2']
-        eps, a, tau = group['eps'], group['a'], group['tau']
-        lr, m = state['lr'], state['m']
-        gradU, V = state['gradU'], state['V']
+        beta1, beta2 = self.opt_params['beta1'], self.opt_params['beta2']
+        eps, a = self.opt_params['eps'], self.opt_params['a']
+        tau = self.opt_params['tau']
+        lr, m, V = state['lr'], state['m'], state['V']
 
         # ASGLD-Algorithm
         Z = torch.randn_like(grad).cuda()
+        Dinv = 1/V.add(eps).sqrt_()
+        param.add_(Dinv.mul_(m).mul_(a).add_(gradU), alpha=-lr/2)\
+            .add_(Z, alpha=math.sqrt(lr * tau))
         m.mul_(beta1).add_(gradU, alpha=1-beta1)
         V.mul_(beta2).addcmul_(gradU, gradU, value=1-beta2)
-        D = V.sqrt().add_(eps)
-        gradU = grad.add_(prior.dLogLike_neg(param))
-        param.add_(gradU + a*m.div(D), alpha=-lr/2)\
-            .add_(Z, alpha=math.sqrt(lr * tau))
+
+class SGHMC(SGMCMC):
+    def __init__(self, params: Iterable, opt_params: dict):
+        super(SGHMC, self).__init__(params, opt_params)
+
+    def reset_variables(self, param, state):
+        state['xi'] = torch.zeros_like(param) # momentum variable
+
+    def apply_alg(self, param, grad, gradU, state):
+        # Get variables
+        M, C = self.opt_params['M'], self.opt_params['C']
+        lr, xi = state['lr'], state['xi']
+        
+        Z = torch.randn_like(grad).cuda()
+        # SGHMC algorithm (symmetric splitting integrator)
+        xi.add_(gradU, alpha=-lr).add_(Z, alpha=math.sqrt(2*C*lr))
+        param.add_(xi, alpha=lr/(2*M))
+        xi.mul_(math.exp(-C*lr/M)) # two steps together
+        param.add_(xi, alpha=lr/(2*M))
+
+class SGRMC(SGMCMC):
+    def __init__(self, params: Iterable, opt_params: dict):
+        super(SGRMC, self).__init__(params, opt_params)
+
+    def reset_variables(self, param, state):
+        state['xi'] = torch.zeros_like(param)

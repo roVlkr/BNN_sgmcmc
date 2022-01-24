@@ -1,29 +1,40 @@
 import torch
 
-class Gamma:
-    def __init__(self, alpha: float, beta: float):
-        self.alpha = alpha
-        self.beta = beta
-
-    @torch.no_grad()
-    def dLogLike(self, theta: torch.Tensor):
-        return (self.alpha - 1) / theta - self.beta
-
 class Normal:
     def __init__(self, mu: float, sigma: float):
         self.mu = mu
         self.sigma = sigma
         self.sigma2 = sigma**2
 
-    @torch.no_grad()
-    def dLogLike_neg(self, theta: torch.Tensor): # negate for minimizing algorithm
-        return (theta - self.mu) / self.sigma2
+    def loglike(self, theta: torch.Tensor):
+        return -theta.view(-1).sub(self.mu).square_().div_(2*self.sigma2)
 
     def sample_like(self, theta: torch.Tensor):
         return self.sigma * torch.randn_like(theta).cuda() + self.mu
 
-    def __add__(self, p):
-        return Normal(self.mu + p.mu, self.sigma + p.sigma)
+class Laplace:
+    def __init__(self, mu: float, sigma: float):
+        self.mu = mu
+        self.sigma = sigma
+        self.torch_dist = torch.distributions.Laplace(mu, sigma)
 
-    def __mul__(self, alpha: float):
-        return Normal(self.mu * alpha, self.sigma * alpha)
+    def loglike(self, theta: torch.Tensor):
+        return -theta.view(-1).sub(self.mu).abs_().div_(self.sigma)
+
+    def sample_like(self, theta: torch.Tensor):
+        return self.torch_dist.rsample(theta.shape)
+
+class SoftUniform:
+    def __init__(self, low: float, high: float, flatness: float=50):
+        self.low = low
+        self.high = high
+        self.flatness = flatness
+
+    def loglike(self, theta: torch.Tensor):
+        """Multiply two sigmoid functions
+        """
+        return 1 / torch.exp(-self.flatness*(theta-self.low)).add(1)\
+            / torch.exp(self.flatness*(theta-self.high)).add(1)
+
+    def sample_like(self, theta: torch.Tensor):
+        return torch.rand_like(theta) * (self.high - self.low) + self.low

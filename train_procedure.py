@@ -7,12 +7,7 @@ import torch.nn.functional as F
 from torch.utils.data import BatchSampler, RandomSampler
 import math
 
-import time
-
 import optimizer
-from model import Model
-
-# This module makes the bayesian inference
 
 class ParamRecorder:
     def __init__(self, max_records: int):
@@ -29,9 +24,9 @@ class ParamRecorder:
         self.current = params
 
 class Training:
-    BURN_IN = 50 # Number of iterations in the burn-in phase
+    BURN_IN = 500 # Number of iterations in the burn-in phase
 
-    def __init__(self, train_set, test_set, model: Model, batch_size: int, opt_params: dict):
+    def __init__(self, train_set, test_set, model: nn.Module, batch_size: int, opt_params: dict):
         self.train_set = train_set
         self.test_set = test_set
         self.N_train = len(train_set)
@@ -39,12 +34,13 @@ class Training:
         self.batch_size = batch_size
         self.model = model
         self.optim = {
-            'sgld': optimizer.SGLD(model.parameters(), model.priors, opt_params),
-            'psgld': optimizer.pSGLD(model.parameters(), model.priors, opt_params),
-            'msgld': optimizer.MSGLD(model.parameters(), model.priors, opt_params),
-            'asgld': optimizer.ASGLD(model.parameters(), model.priors, opt_params)
+            'sgld': optimizer.SGLD(model.parameters(), opt_params),
+            'psgld': optimizer.pSGLD(model.parameters(), opt_params),
+            'msgld': optimizer.MSGLD(model.parameters(), opt_params),
+            'asgld': optimizer.ASGLD(model.parameters(), opt_params),
+            'sghmc': optimizer.SGHMC(model.parameters(), opt_params)
         }[opt_params['name']]
-        self.criterion = nn.CrossEntropyLoss(reduction='mean') # combines LogSoftmax layer and NLLLoss
+        self.criterion = nn.NLLLoss(reduction='mean')
         self.param_recorder = ParamRecorder(200)
 
     def start(self, epochs: int=5, thinning: int=20):
@@ -67,21 +63,25 @@ class Training:
                 self.__print_progressbar(e+1, b+1, num_batches)
                 k += 1 # iteration
             losses.append(loss)
-            # Get test accuracy
+            # Get test error
             err = self.__test_error()
-            print(f'Iteration {k}: Test error {err:0.4f}, Step size {self.optim.lr()}')
+            print(f'Iteration {k}: Test error {err:0.4f}, Step size {self.optim.lr():.1e}')
             test_err.append(err)
         return self.param_recorder.records, losses, test_err
 
     def __optim(self, x, y):
         # Propagate forward
         y_pred = self.model(x)
-        loss = self.N_train * self.criterion(y_pred, y)
 
-        # Backpropagation
         self.optim.zero_grad()
+        # First backpropagation for likelihood gradient
+        loss = self.N_train * self.criterion(y_pred, y)
         loss.backward()
-        self.optim.step()
+        self.optim.save_gradlikelihood() # first save
+        # Now backpropagation for the prior gradient
+        neglogprior = self.model.logprior().negative_()
+        neglogprior.backward() # gets added to the existing grad
+        self.optim.step() # now step
         return loss.detach().item()
 
     @torch.no_grad()
@@ -103,7 +103,7 @@ class Training:
             print()
 
 class Evaluation:
-    def __init__(self, test_set, model: Model, param_records: list, batch_size: int):
+    def __init__(self, test_set, model: nn.Module, param_records: list, batch_size: int):
         self.test_loader = DataLoader(test_set, batch_size=batch_size, pin_memory=True)
         self.N_test = len(test_set)
         self.param_records = param_records
@@ -133,4 +133,4 @@ class Evaluation:
             x_flat = x.reshape(self.batch_size, -1)
             arg_max, max_prob = self.eval(x_flat)
             acc += torch.sum(y == arg_max) / self.N_test
-        return acc.item(), acc_just#.item()
+        return acc.item()
