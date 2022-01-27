@@ -8,11 +8,16 @@ from abc import ABC, abstractmethod
 
 class SGMCMC(Optimizer, ABC):
     """opt_params = dict(name, lr0, min_lr, gamma, ...)
+    lr = max(lr0 * k^(-gamma), min_lr)
+
+    Implementations are based on Adam-Algorithm from the PyTorch library
+    (https://pytorch.org/docs/stable/_modules/torch/optim/adam.html)
     """
     def __init__(self, params: Iterable, opt_params: dict):
         self.opt_params = opt_params
         super(SGMCMC, self).__init__(params, opt_params)
 
+    @torch.no_grad()
     def save_gradlikelihood(self):
         """Save only the likelihood part of the gradient but also some
         of the required information for the step to complete.
@@ -70,12 +75,7 @@ class SGMCMC(Optimizer, ABC):
 
 
 class SGLD(SGMCMC):
-    """Implements Stochastic Gradient Langevin Dynamics. This Algorithm is based on the implementation of the
-    SGD-Algorithm from the PyTorch library (https://pytorch.org/docs/stable/_modules/torch/optim/adam.html).
-    Standard value for gamma=1/3 (see Chen15 MSE bound)
-
-    lr = lr0 * k^(-gamma)
-    opt_params: lr0, gamma, min_lr, tau
+    """opt_params: lr0, gamma, min_lr, tau
     """
 
     def __init__(self, params: Iterable, opt_params: dict):
@@ -96,17 +96,14 @@ class SGLD(SGMCMC):
 
 
 class pSGLD(SGMCMC):
-    """See above
-    Default parameters see Lietal16 and Chen15
-
-    opt_params: lr0, min_lr, gamma, alpha, eps, tau, N(_train)
+    """opt_params: lr0, min_lr, gamma, alpha, eps, tau, N
     """
 
     def __init__(self, params: Iterable, opt_params: dict):
         super(pSGLD, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
-        state['V'] = torch.zeros_like(param).cuda()
+        state['V'] = torch.ones_like(param).cuda()
 
     def apply_alg(self, param, grad, gradU, state):
         # Get variables
@@ -128,7 +125,7 @@ class pSGLD(SGMCMC):
 
 
 class MSGLD(SGMCMC):
-    """    opt_params: lr0, min_lr, gamma, beta1, a, tau
+    """opt_params: lr0, min_lr, gamma, beta1, a, tau
     """
 
     def __init__(self, params: Iterable, opt_params: dict):
@@ -152,7 +149,7 @@ class MSGLD(SGMCMC):
 
 
 class ASGLD(SGMCMC):
-    """    opt_params: lr0, min_lr, gamma, beta1, beta2, a, eps, tau
+    """opt_params: lr0, min_lr, gamma, beta1, beta2, a, eps, tau
     """
 
     def __init__(self, params: Iterable, opt_params: dict):
@@ -172,24 +169,27 @@ class ASGLD(SGMCMC):
 
         # ASGLD-Algorithm
         Z = torch.randn_like(grad).cuda()
-        Dinv = 1/V.add(eps).sqrt_()
-        param.add_(Dinv.mul_(m).mul_(a).add_(gradU), alpha=-lr/2)\
+        D_inv = 1/V.add(eps).sqrt_()
+        param.add_(D_inv.mul_(m).mul_(a).add_(gradU), alpha=-lr/2)\
             .add_(Z, alpha=math.sqrt(lr * tau))
         m.mul_(beta1).add_(gradU, alpha=1-beta1)
         V.mul_(beta2).addcmul_(gradU, gradU, value=1-beta2)
 
+
 class SGHMC(SGMCMC):
+    """opt_params: lr0, min_lr, gamma, M, C
+    """
     def __init__(self, params: Iterable, opt_params: dict):
         super(SGHMC, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
-        state['xi'] = torch.zeros_like(param) # momentum variable
+        state['xi'] = torch.zeros_like(param).cuda() # momentum variable
 
     def apply_alg(self, param, grad, gradU, state):
         # Get variables
         M, C = self.opt_params['M'], self.opt_params['C']
         lr, xi = state['lr'], state['xi']
-        
+
         Z = torch.randn_like(grad).cuda()
         # SGHMC algorithm (symmetric splitting integrator)
         xi.add_(gradU, alpha=-lr).add_(Z, alpha=math.sqrt(2*C*lr))
@@ -197,9 +197,27 @@ class SGHMC(SGMCMC):
         xi.mul_(math.exp(-C*lr/M)) # two steps together
         param.add_(xi, alpha=lr/(2*M))
 
+
 class SGRMC(SGMCMC):
+    """opt_params: lr0, min_lr, gamma, m, c, C
+    """
     def __init__(self, params: Iterable, opt_params: dict):
         super(SGRMC, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
         state['xi'] = torch.zeros_like(param)
+
+    def apply_alg(self, param, grad, gradU, state):
+        m, c = self.opt_params['m'], self.opt_params['c']
+        C = self.opt_params['C']
+        lr, xi = state['lr'], state['xi']
+
+        # Relativistic mass
+        M = xi.pow(2).sum().div_(c**2).add_(m**2).sqrt_().item()
+
+        Z = torch.randn_like(grad).cuda()
+        # Euler integrator
+        xi.add_(gradU, alpha=-lr)\
+            .add_(xi, alpha=-C*lr/M)\
+            .add_(Z, alpha=math.sqrt(2*C*lr))
+        param.add_(xi, alpha=lr/M)

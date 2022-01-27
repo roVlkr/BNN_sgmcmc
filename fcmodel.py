@@ -1,5 +1,6 @@
 from torch.nn.parameter import Parameter
 import torch.nn as nn
+import torch
 
 class FCModel(nn.Module):
     def __init__(self, layout: list, wpriors: list, bpriors: list):
@@ -21,7 +22,7 @@ class FCModel(nn.Module):
         self.nn = nn.Sequential(*all_layers)
         self.__reset_weights_biases()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         return self.nn(x)
 
     def weights_biases(self):
