@@ -103,7 +103,7 @@ class pSGLD(SGMCMC):
         super(pSGLD, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
-        state['V'] = torch.ones_like(param).cuda()
+        state['V'] = torch.zeros_like(param).cuda()
 
     def apply_alg(self, param, grad, gradU, state):
         # Get variables

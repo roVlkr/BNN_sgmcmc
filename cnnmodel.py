@@ -35,3 +35,7 @@ class CNNModel(nn.Module):
 
     def logprior(self):
         pass
+
+if __name__ == '__main__':
+    model = CNNModel(None, None, None)
+    print(model.conv1.weight.shape)
