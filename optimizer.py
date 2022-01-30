@@ -156,7 +156,6 @@ class ASGLD(SGMCMC):
         super(ASGLD, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
-        eps = self.opt_params['eps']
         state['m'] = torch.zeros_like(param).cuda()
         state['V'] = torch.zeros_like(param).cuda()
 

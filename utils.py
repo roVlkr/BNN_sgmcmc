@@ -42,3 +42,27 @@ def plot_distributions(wpriors, bpriors, wposts, bposts):
         axes[i, 1].legend(['Prior', 'Posterior'])
     plt.tight_layout()
     plt.show()
+
+def conv_shape(in_channels: int, out_channels: int, kernel_size: int, stride: int=1, padding: int=0):
+    return (in_channels, out_channels, kernel_size, stride, padding)
+
+def pool_shape(kernel_size: int, stride: int=None, padding: int=0):
+    stride = kernel_size if stride == None else stride # performs a // kernel_size operation
+    return (kernel_size, stride, padding)
+
+def conv_to_linear_shapes(feature_size: np.ndarray, conv_layout: list):
+    if len(conv_layout) == 0:
+        return [feature_size.prod()]
+    linear_shapes = [feature_size.prod() * conv_layout[0][0]]
+    for conv_layer, pool_layer in zip(conv_layout[::2], conv_layout[1::2]):
+        _, out_channels, kernel_size, stride, padding = conv_layer
+        # Conv
+        feature_size[0] = (feature_size[0] + 2*padding - kernel_size) // stride + 1
+        feature_size[1] = (feature_size[1] + 2*padding - kernel_size) // stride + 1
+        # Pool
+        kernel_size, stride, padding = pool_layer
+        feature_size[0] = (feature_size[0] + 2*padding - kernel_size) // stride + 1
+        feature_size[1] = (feature_size[1] + 2*padding - kernel_size) // stride + 1
+        linear_shapes.append(out_channels * feature_size.prod())
+    return linear_shapes
+        

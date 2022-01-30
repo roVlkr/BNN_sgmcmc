@@ -53,7 +53,7 @@ class Training:
             sampler = BatchSampler(RandomSampler(self.train_set, replacement=True), self.batch_size, True)
             num_batches = len(sampler)
             for b, batch in enumerate(sampler):
-                x = torch.stack([self.train_set[i][0] for i in batch]).cuda().view(self.batch_size, -1)
+                x = torch.stack([self.train_set[i][0] for i in batch]).cuda()
                 y = torch.tensor([self.train_set[i][1] for i in batch]).cuda()                
                 self.__optim(x, y) # Optimize params
 
@@ -90,7 +90,7 @@ class Training:
         batch_size = 500
         test_loader = DataLoader(dataset=self.test_set, batch_size=batch_size, pin_memory=True)
         for x, y in test_loader:
-            x, y = x.cuda(non_blocking=True).view(batch_size, -1), y.cuda(non_blocking=True)
+            x, y = x.cuda(non_blocking=True), y.cuda(non_blocking=True)
             y_pred = torch.argmax(self.model(x), dim=1)
             err += torch.sum(y_pred != y) / self.N_test
         return err.item()
@@ -120,14 +120,13 @@ class Evaluation:
         avg = 0
         for h, param in self.param_records:
             self.model.load_state_dict(param)
-            avg += h * F.softmax(self.model(x), dim=1) / T # Chen15 average
+            avg += h * F.softmax(self.model(x), dim=1) / T # Chen15 avg
         return torch.argmax(avg, dim=1)
 
     def eval_all(self):
         acc = 0
         for x, y in self.test_loader:
             x, y = x.cuda(non_blocking=True), y.cuda(non_blocking=True)
-            x_flat = x.reshape(self.batch_size, -1)
-            arg_max = self.eval(x_flat)
+            arg_max = self.eval(x)
             acc += torch.sum(y == arg_max) / self.N_test
         return acc.item()
