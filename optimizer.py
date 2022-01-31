@@ -31,7 +31,6 @@ class SGMCMC(Optimizer, ABC):
             for param in group['params']:
                 if param.grad is not None:
                     grad = param.grad.detach().clone() # make deep copy
-                    x = grad.norm()
                     self.current_step['params'].append(param)
                     self.current_step['gradlikelihoods'].append(grad)
 
@@ -92,7 +91,7 @@ class SGLD(SGMCMC):
         # SGLD-Algorithm
         Z = torch.randn_like(grad).cuda()
         param.add_(gradU, alpha=-lr/2)\
-            .add_(Z, alpha=math.sqrt(lr * tau)) # noise
+            .add_(Z, alpha=math.sqrt(lr * tau))
 
 
 class pSGLD(SGMCMC):
