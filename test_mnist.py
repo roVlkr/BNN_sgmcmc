@@ -38,7 +38,7 @@ def test_sgmcmc(train_set, test_set, network_layout, opt_params, epochs, batch_s
     acc = evaluation.eval_all()
     print(f'Accuracy of {opt_params["name"]}: {acc}')
 
-    #utils.plot_distributions(wpriors, bpriors, wposts, bposts)
+    utils.plot_distributions(wpriors, bpriors, wposts, bposts)
     return test_err, acc
 
 
@@ -60,7 +60,7 @@ def fc1_test(network_layout, epochs, batch_size, burn_in, thinning):
 
         # Hamiltonian dynamics
         dict(name='sghmc', lr0=1e-3, min_lr=1e-5, gamma=0.2, M=0.1, C=50),
-        dict(name='sgrmc', lr0=5e-3, min_lr=1e-6, gamma=0.333, m=1, c=100, C=100)  
+        dict(name='sgrmc', lr0=5e-3, min_lr=1e-5, gamma=0.333, m=1, c=100, C=100)  
     ]
 
     # Gather accuracy results of each optimizer
@@ -146,11 +146,11 @@ if __name__ == '__main__':
     # utils.show_some_images(train_set) => shows first 10 features
     # print(utils.calc_data_mean_std(train_set)) => mean=tensor(0.1307), std=tensor(0.3081)
     num_optimizers = len(OPTIMIZER_NAMES)
-    num_experiments = 2
-    epochs = 2
+    num_experiments = 5
+    epochs = 20
     batch_size = 128
-    thinning = 5
-    burn_in = 1
+    thinning = 50
+    burn_in = 5000
     conv_layout = [conv_shape(1, 6, 3), pool_shape(2), conv_shape(6, 16, 3), pool_shape(2)]
     cnn_layout = (conv_layout, [400, 100, 10])
     fcn_layout = ([], [784, 400, 100, 10])
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     for run in range(num_experiments):
         print('-----------------------')
         print('Experiment run:', run+1)
-        errs, accs = fc1_test(fcn_layout, epochs, batch_size, burn_in, thinning)
+        errs, accs = cnn_test(cnn_layout, epochs, batch_size, burn_in, thinning)
         test_errs += errs / num_experiments # calculate average test errors
         test_accs[run] = accs
 

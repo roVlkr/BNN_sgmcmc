@@ -103,7 +103,7 @@ class pSGLD(SGMCMC):
         super(pSGLD, self).__init__(params, opt_params)
 
     def reset_variables(self, param, state):
-        state['V'] = torch.zeros_like(param).cuda()
+        state['V'] = torch.zeros_like(param).cuda() # or ones_like
 
     def apply_alg(self, param, grad, gradU, state):
         # Get variables
@@ -114,12 +114,12 @@ class pSGLD(SGMCMC):
         lr, V = state['lr'], state['V']
 
         # pSGLD-Algorithm
+        # Due to diagonal form (originally) -> elementwise products
         Z = torch.randn_like(grad).cuda()
         mean_grad = grad/N
-        V.mul_(alpha).addcmul_(mean_grad, mean_grad, value=1-alpha) # vector format, no diagonal matrix
+        V.mul_(alpha).addcmul_(mean_grad, mean_grad, value=1-alpha)
         G = 1/V.sqrt().add_(eps)
 
-        # Due to diagonal form (originally) -> elementwise products
         param.addcmul_(gradU, G, value=-lr/2)\
             .addcmul_(Z, G.sqrt(), value=math.sqrt(lr * tau))
 

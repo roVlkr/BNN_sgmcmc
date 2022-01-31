@@ -40,6 +40,8 @@ class BNN(nn.Module):
         return self.nn(x)
 
     def weights_biases(self):
+        """Returns the weight and bias tensors.
+        """
         weights, biases = [], []
         for layer in self.layers:
             weights.append(layer.weight)
@@ -47,6 +49,8 @@ class BNN(nn.Module):
         return weights, biases
 
     def __reset_weights_biases(self):
+        """Resets weights and biases according to the priors.
+        """
         for i, layer in enumerate(self.layers):
             layer.weight = Parameter(self.wpriors[i].sample_like(layer.weight))
             layer.bias = Parameter(self.bpriors[i].sample_like(layer.bias))

@@ -10,6 +10,8 @@ import math
 import optimizer
 
 class ParamRecorder:
+    """Bounded list for parameters of the neural network.
+    """
     def __init__(self, max_records: int):
         self.records = []
         self.max_records = max_records
@@ -86,6 +88,8 @@ class Training:
 
     @torch.no_grad()
     def __test_error(self):
+        """Evaluates the neural network for the current parameter on the test set.
+        """
         err = 0
         batch_size = 500
         test_loader = DataLoader(dataset=self.test_set, batch_size=batch_size, pin_memory=True)

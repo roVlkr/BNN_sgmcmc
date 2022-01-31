@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 
 def show_some_images(dataset, n=10):
+    """Shows the first n features of dataset as an image.
+    """
     image_loader = DataLoader(dataset, batch_size=n)
     images, _ = next(iter(image_loader))
     figure = make_grid(images[:12], nrow=12)
@@ -13,7 +15,7 @@ def show_some_images(dataset, n=10):
     plt.imshow(np.transpose(figure.numpy(), (1, 2, 0)))
     plt.show()
 
-def calc_data_mean_std(dataset):    
+def calc_data_mean_std(dataset):
     loader = DataLoader(dataset, batch_size=1000)
     num_batches = len(loader)
     mean = 0
@@ -27,6 +29,9 @@ def calc_data_mean_std(dataset):
     return mean, torch.sqrt(std)
 
 def plot_distributions(wpriors, bpriors, wposts, bposts):
+    """Plots the prior and posterior ditributions of the weights
+    and biases.
+    """
     num_rows = len(wpriors) # for each layer one row
     fig, axes = plt.subplots(nrows=num_rows, ncols=2)    
     fig.suptitle('Priors vs. Posteriors')
@@ -47,10 +52,13 @@ def conv_shape(in_channels: int, out_channels: int, kernel_size: int, stride: in
     return (in_channels, out_channels, kernel_size, stride, padding)
 
 def pool_shape(kernel_size: int, stride: int=None, padding: int=0):
-    stride = kernel_size if stride == None else stride # performs a // kernel_size operation
+    stride = kernel_size if stride == None else stride # performs a "// kernel_size"-operation
     return (kernel_size, stride, padding)
 
 def conv_to_linear_shapes(feature_size: np.ndarray, conv_layout: list):
+    """Convertes the convolutional layers + pooling layers to equivalent sizes of
+    flattened (fully connected) layers.
+    """
     if len(conv_layout) == 0:
         return [feature_size.prod()]
     linear_shapes = [feature_size.prod() * conv_layout[0][0]]
